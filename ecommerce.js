@@ -741,13 +741,13 @@ app.post('/viewProducts',
 										for ( var i = 0; i < count; i++) {
 											 console.log("processing &&&&&" + JSON.stringify(results[i]));
 											returningResults
-													.push({"name":results[i]["_source"]["title"]});
+													.push({name:results[i]["_source"]["title"]});
 											//returningResults.push(results[i]["_source"]["asin"]);
 										}
 										
-										console.log(JSON.stringify({product_list : returningResults}));
+										console.log(JSON.stringify(returningResults));
 										res.send(JSON.stringify({
-											product_list : returningResults
+											 returningResults
 										}));
 									});
 
