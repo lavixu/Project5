@@ -289,7 +289,7 @@ app.post('/productsPurchased', function(req, res) {
 //				res.send(JSON.stringify(result));
 //				return;
 //			 }
-			var selectStmt = "select productName, quantity from customerPurchases   where username = '" + username + "';";
+		    var selectStmt = "select productName, quantity from customerPurchases where username = '" + username + "';";
 			mysql_select(con, selectStmt, function(err1, data1) {
 						if (err1) {
 							console.log("ERROR IN INSERT : ", err1);
@@ -298,17 +298,65 @@ app.post('/productsPurchased', function(req, res) {
 							return;
 						} else {
 							result  = [];
+							var productQuantityHash = {}
 							//console.log(JSON.stringify(data1.length) + "haha");
+							if(data1.length == 0)
+								{
+								 res.send("[]");
+								 return;
+								}
 			                for(var i = 0; i < data1.length; i++) {
 			                	var tmp = [];
-			                	//console.log(data1[i] + "HAHAHA");
-			                	tmp.push(data1[i]["productName"]);
-			                	tmp.push(data1[i]["quantity"]);
+			                	productQuantityHash[data1[i]["productName"]] = data1[i]["quantity"];
 			                	result.push(tmp);
 			                }
-							//console.log("DATA: ", result);
-							res.send(JSON.stringify(result));
-							return;
+							var asins = Object.keys(productQuantityHash);
+							var searchParam = {
+									index : 'product',
+									type : 'product',
+									body: {
+							        query : {
+							        constant_score : {
+							            filter : {
+							                terms : { 
+							                    asin : asins
+							                }
+							            }
+							        }
+							        }
+							    }
+							}
+							
+							client.search(searchParam, function(err, esRes) {
+								if (err) {
+									// handle error
+									console.log("Error happened" + err);
+									res.send(JSON.stringify("Something wrong happened"));
+									return;
+								}
+								var returningResults = []
+								var results = esRes.hits.hits;
+								var count = 0
+
+								if (esRes.hits.total == 0) {
+									result = [];
+									res.send(JSON.stringify(result));
+									return;
+								}
+								
+								count = esRes.hits.total
+								for ( var i = 0; i < count; i++) {
+									var name = results[i]["_source"]["title"];
+									var asin = results[i]["_source"]["asin"];
+									var quantity = productQuantityHash[asin];
+									returningResults
+											.push([name, quantity]);
+							    }
+								console.log(JSON.stringify(returningResults));
+								res.send(JSON.stringify(returningResults));
+								return;
+							});
+							
 						}
 					});
 });
@@ -317,9 +365,10 @@ app.post('/getRecommendations', function(req, res) {
 	params = req.body;
 	asin = params["asin"];
 	console.log("Received asin" + asin);
-    var selectStmt = "select * from reco   where product1 = '" + asin + "'  or product2 = '" + asin + "' order by count desc limit 5;";
+    var selectStmt = "select product2 as name, count from reco   where product1 = '" + asin + "' order by count desc limit 5;" +
+    		         "select product1 as name, count from reco where  product2 = '" + asin + "' order by count desc limit 5; ";
 	mysql_select(con, selectStmt,
-			function(err1, data1) {
+			function(err1, data2) {
 				if (err1) {
 					console.log("ERROR IN INSERT : ", err1);
 					result = "There was a problem with this action";
@@ -327,19 +376,54 @@ app.post('/getRecommendations', function(req, res) {
 					return;
 				} else {
 					var final_result = []
+					var data1 = data2[0].concat(data2[1]);
 					for(var i = 0; i < data1.length; i++ )
 	                	{
-	                	    if(data1[i]["product1"] == asin) {
-	                		 final_result.push(data1[i]["product2"]);
-	                		 } else {
-	                			 final_result.push(data1[i]["product1"]);
-	                		 }
-	                		
-	                		 
+	                	   final_result.push(data1[i]["name"]);
 	                	}
-					console.log("returning: ", final_result);
-					res.send(JSON.stringify(final_result));
-					return;
+					var searchParam = {
+							index : 'product',
+							type : 'product',
+							body: {
+					        query : {
+					        constant_score : {
+					            filter : {
+					                terms : { 
+					                    asin : final_result
+					                }
+					            }
+					        }
+					        }
+					    }
+					}
+					
+					client.search(searchParam, function(err, esRes) {
+						if (err) {
+							// handle error
+							console.log("Error happened" + err);
+							res.send(JSON.stringify("Something wrong happened"));
+							return;
+						}
+						var returningResults = []
+						var results = esRes.hits.hits;
+						var count = 0
+
+						if (esRes.hits.total == 0) {
+							result = [];
+							res.send(JSON.stringify(result));
+							return;
+						}
+						
+						count = esRes.hits.total
+						for ( var i = 0; i < count; i++) {
+							returningResults
+									.push({name:results[i]["_source"]["title"]});
+					    }
+						console.log(JSON.stringify(returningResults));
+						res.send(JSON.stringify(returningResults));
+						return;
+					});
+					
 				}
 			});
 });
@@ -364,7 +448,7 @@ app.post('/buyProducts', function(req, res) {
 			var	tmp1 = asins.substring(1, asins.length - 1);
 			tmp1 = tmp1.split(",");
 		    for(var i = 0; i < tmp1.length; i ++) {
-				console.log(tmp1[i] + "processing");
+				//console.log(tmp1[i] + "processing");
 				buf += "('" + tmp1[i] + "','" + username + "', 1),";
 			}
 			buf = buf.substring(0, buf.length - 1);
@@ -452,20 +536,7 @@ app.post('/addProducts', function(req, res) {
 							res.send(JSON.stringify(result));
 							return;
 						}
-//						} else if ((group != "Book") && (group != "DVD")
-//								&& (group != "Music")
-//								&& (group != "Electronics")
-//								&& (group != "Home") && (group != "Beauty")
-//								&& (group != "Toys") && (group != "Clothing")
-//								&& (group != "Sports")
-//								&& (group != "Automotive")
-//								&& (group != "Handmade")) {
-//							console.log("returning: group mismatch!! There was a problem with this action");
-//							result = "There was a problem with this action";
-//							res.send(JSON.stringify(result));
-//							return;
-//						}
-							else {
+					  else {
 							client.create({
 												index : 'product',
 												type : 'product',
@@ -633,7 +704,9 @@ app.post('/viewProducts',
 					console.log("Recieved params" + JSON.stringify(params));
 					var perPage = 1000
 					var pageNum = 1
+					var isKeyWordSearch = false
 					if (!(keyword == null || keyword == undefined)) {
+						isKeyWordSearch = true
 						var searchKeywordParams = {
 							index : 'product',
 							type : 'product',
@@ -707,10 +780,7 @@ app.post('/viewProducts',
 					}
 
 					// console.log(searchParams + "are the params");
-					client
-							.search(
-									searchParams,
-									function(err, esRes) {
+					client.search(searchParams, function(err, esRes) {
 										if (err) {
 											// handle error
 											console.log("Error happened" + err);
@@ -720,36 +790,67 @@ app.post('/viewProducts',
 										var returningResults = []
 										var results = esRes.hits.hits;
 										var count = 0
-
-										if (esRes.hits.total == 0) {
-											result = "There were no products in the system that met that criteria";
-											res.send(JSON.stringify(result));
-											return;
-										}
 										if (esRes.hits.total < perPage) {
 											count = esRes.hits.total
 										} else {
 											count = perPage
 										}
-										// console.log(esRes.hits.total + "is
-										// the total!!! *******************");
-										// console.log(JSON.stringify(esRes.hits)
-										// + "are the hits
-										// ************************");
 										console.log(count + "is the count");
 										// console.log(JSON.stringify(results[0]));
 										for ( var i = 0; i < count; i++) {
-											 console.log("processing &&&&&" + JSON.stringify(results[i]));
+										//	 console.log("processing &&&&&" + JSON.stringify(results[i]));
 											returningResults
 													.push({name:results[i]["_source"]["title"]});
 											//returningResults.push(results[i]["_source"]["asin"]);
 										}
+										if(isKeyWordSearch) {
+										searchKeywordParams = {
+												index : 'product',
+												type : 'product',
+												from : (pageNum - 1) * perPage,
+												size : perPage,
+												body : {
+															query : {
+																wildcard : {
+																	description : "*" + keyword + "*"
+																}
+															}
+												}
+											};
+										
+										client.search(searchKeywordParams, function(err1, esRes1) {
+											if (err1) {
+												// handle error
+												console.log("Error happened" + err1);
+												res.send(JSON.stringify("Something wrong happened"));
+												return;
+											}
+											var results = esRes1.hits.hits;
+											var count = 0
+											if (esRes1.hits.total < perPage) {
+												count = esRes1.hits.total
+											} else {
+												count = perPage
+											}
+											console.log(count + "is the count");
+											// console.log(JSON.stringify(results[0]));
+											for ( var i = 0; i < count; i++) {
+												// console.log("processing &&&&&" + JSON.stringify(results[i]));
+												returningResults
+														.push({name:results[i]["_source"]["title"]});
+											}
 										
 										console.log(JSON.stringify(returningResults));
-										res.send(JSON.stringify({
-											 returningResults
-										}));
+										res.send(JSON.stringify({returningResults}));
+										return;
+										
 									});
+								} else
+									{
+									res.send(JSON.stringify({returningResults}));
+									return;
+									}
+					});
 
 				});
 
